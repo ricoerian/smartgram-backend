@@ -3,6 +3,7 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from .models import Post
 from .serializers import PostSerializer
 
+
 class PostViewSet(viewsets.ModelViewSet):
     queryset = Post.objects.all().order_by('-created_at')
     serializer_class = PostSerializer
