@@ -17,9 +17,9 @@ def process_media_task(post_id: int) -> None:
             style = post.ai_style or "auto"
             
             result = generate_ai_image(
-                post.image.path, 
-                base_prompt, 
-                style=style, 
+                post.image.path,
+                base_prompt,
+                style=style,
                 strength=ai_strength
             )
             

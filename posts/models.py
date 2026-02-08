@@ -34,8 +34,8 @@ class Post(models.Model):
     ai_prompt = models.TextField(blank=True, null=True)
     
     ai_strength = models.FloatField(
-        default=None, 
-        null=True, 
+        default=None,
+        null=True,
         blank=True,
         help_text="Leave empty for auto-detection based on image quality. Range: 0.20-0.70"
     )
