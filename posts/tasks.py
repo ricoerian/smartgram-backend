@@ -34,11 +34,6 @@ def process_media_task(post_id: int) -> None:
                     post.strength_auto_detected = False
                     print(f"📌 Manual strength used: {ai_strength:.2f}")
             else:
-                # Handle generation failure if needed, though service logs it.
-                # If result['success'] is False, we might want to fail the task?
-                # For now keeping existing logic: if success is False, it just doesn't update strength metadata
-                # but let's check if we should raise error to trigger the except block.
-                # If the service caught an error, it returns success=False and error message.
                 if result.get("error"):
                     raise Exception(result.get("error"))
 
@@ -47,7 +42,6 @@ def process_media_task(post_id: int) -> None:
                 base_prompt = post.ai_prompt or "high quality video"
                 style = post.ai_style or "auto"
                 video_strength = ai_strength if ai_strength else 0.30
-                # TODO: Handle return value of generate_video
                 VideoGeneratorService.generate_video(
                     post.video.path, 
                     base_prompt, 

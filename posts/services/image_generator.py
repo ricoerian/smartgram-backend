@@ -5,8 +5,6 @@ from typing import Optional, List, Dict, Any, Union
 import traceback
 import time
 
-# Adjust imports to point to the correct locations
-# Assuming these are available in the parent/sibling packages as per original code
 from ..config import DEFAULT_INFERENCE_STEPS, DEFAULT_CFG_SCALE, DEFAULT_DENOISE_STRENGTH, NEGATIVE_PROMPTS
 from ..domain.entities import ImageAnalysis
 from ..infrastructure import (
@@ -40,10 +38,6 @@ class ImageGeneratorService:
         denoise_strength: float = DEFAULT_DENOISE_STRENGTH,
         strength: Optional[float] = None
     ) -> Dict[str, Any]:
-        """
-        Generates an AI image based on the input image and prompt.
-        Returns a dictionary with success status and metadata.
-        """
         os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
         
         original_image = None
@@ -65,19 +59,15 @@ class ImageGeneratorService:
             print(f"Style: {style} | Steps: {inference_steps} | CFG: {cfg_scale}")
             print(f"Max resolution: 1024px | Hires: {use_hires}")
             
-            # 1. Load and Resize
             original_image = Image.open(image_path).convert("RGB")
             original_image = smart_resize(original_image)
             
-            # 2. Analyze
             image_analysis = analyze_image_complexity(original_image)
             preprocessed_image = preprocess_image(original_image, image_analysis)
             
             print(f"Image analysis: complexity={image_analysis.is_complex}, details={image_analysis.has_fine_details}, entropy={image_analysis.entropy:.2f}")
             
-            # 3. Determine Strength
             if strength_canny is None:
-                # If 'strength' arg was passed (legacy support), use it, otherwise compute
                 if strength is not None:
                      strength_canny = strength
                      print(f"Using provided strength: {strength_canny:.3f}")
@@ -91,7 +81,6 @@ class ImageGeneratorService:
             
             response["strength"] = strength_canny
 
-            # 4. Prepare Control Images
             canny_thresholds = compute_adaptive_canny_thresholds(preprocessed_image)
             canny_image = make_canny_condition(preprocessed_image, canny_thresholds)
             control_images = [canny_image]
@@ -109,13 +98,11 @@ class ImageGeneratorService:
             elif use_openpose and not OPENPOSE_AVAILABLE:
                 print("OpenPose unavailable (dependencies missing)")
             
-            # 5. Build Prompt
             final_prompt = build_enhanced_prompt(prompt, style, image_analysis)
             print(f"Enhanced prompt: {final_prompt[:150]}...")
             
             final_control_scale = control_scales if len(control_scales) > 1 else control_scales[0]
             
-            # 6. Generation Pipeline
             with ai_pipeline_context(use_openpose=use_openpose and OPENPOSE_AVAILABLE) as (pipe, compel):
                 device = pipe.device
                 dtype = pipe.unet.dtype
@@ -139,7 +126,6 @@ class ImageGeneratorService:
                         output_type="latent",
                     ).images[0]
                     
-                    # Cleanup control resources immediately
                     del control_images[:]
                     del control_scales
                     if torch.cuda.is_available():
@@ -162,7 +148,6 @@ class ImageGeneratorService:
                     del image
                     cleanup_gpu_memory()
                 
-                # 7. Hi-Res Fix (Optional)
                 if use_hires:
                     print(f"Applying hires fix (scale: 2.0x)...")
                     with torch.no_grad():
@@ -192,7 +177,6 @@ class ImageGeneratorService:
                 del conditioning, pooled
                 cleanup_gpu_memory()
             
-            # 8. Save Result
             result.save(image_path, quality=98, optimize=True, subsampling=0)
             print("✅ Image generation completed successfully")
             
@@ -206,7 +190,6 @@ class ImageGeneratorService:
             return response
         
         finally:
-            # 9. Cleanup
             for obj in [original_image, preprocessed_image, canny_image, openpose_image, result]:
                 if obj is not None:
                     del obj
