@@ -6,6 +6,12 @@ from django.dispatch import receiver
 
 
 class Post(models.Model):
+    class PostStatus(models.TextChoices):
+        PENDING = 'pending', 'Pending'
+        PROCESSING = 'processing', 'Processing'
+        COMPLETED = 'completed', 'Completed'
+        FAILED = 'failed', 'Failed'
+
     STYLE_CHOICES = [
         ('auto', 'Auto Enhance'),
         ('noir', 'Film Noir'),
@@ -43,7 +49,12 @@ class Post(models.Model):
     strength_auto_detected = models.BooleanField(default=False)
     detected_strength_value = models.FloatField(null=True, blank=True)
     
-    status = models.CharField(max_length=20, default='pending')
+    status = models.CharField(
+        max_length=20,
+        choices=PostStatus.choices,
+        default=PostStatus.PENDING
+    )
+    error_message = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
