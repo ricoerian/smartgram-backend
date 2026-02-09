@@ -5,20 +5,18 @@ from typing import Optional, List, Dict, Any, Union
 import traceback
 import time
 
-from ..config import DEFAULT_INFERENCE_STEPS, DEFAULT_CFG_SCALE, DEFAULT_DENOISE_STRENGTH, NEGATIVE_PROMPTS
+from ..config import DEFAULT_INFERENCE_STEPS, DEFAULT_CFG_SCALE, DEFAULT_DENOISE_STRENGTH, NEGATIVE_PROMPTS, CFG_NORMALIZE_REALISM
 from ..domain.entities import ImageAnalysis
 from ..infrastructure import (
     analyze_image_complexity,
     compute_adaptive_canny_thresholds,
     preprocess_image,
     make_canny_condition,
-    make_openpose_condition,
     smart_resize,
     cleanup_gpu_memory,
     ai_pipeline_context,
     text_to_image_pipeline_context,
     create_hires_refiner,
-    OPENPOSE_AVAILABLE,
 )
 from ..adapters.prompt_builder import build_enhanced_prompt
 from ..use_cases.image_analysis import compute_optimal_strength

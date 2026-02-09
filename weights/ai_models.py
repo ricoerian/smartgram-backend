@@ -10,15 +10,17 @@ from diffusers import (
     StableDiffusionXLImg2ImgPipeline,
     DPMSolverMultistepScheduler,
     AutoencoderKL,
+    AutoPipelineForText2Image,
 )
 from compel import Compel, ReturnedEmbeddingsType
 
 from ..config import (
     BASE_MODEL_ID,
     VAE_ID,
-    CONTROLNET_ID_CANNY,
-    CONTROLNET_ID_OPENPOSE,
+    CONTROLNET_ID_UNION,
     HIRES_SCALE,
+    CFG_NORMALIZE_REALISM,
+    CFG_NORMALIZE_ARTISTIC,
 )
 from ..domain.value_objects import DeviceConfig, ImageDimensions
 from .memory_manager import cleanup_gpu_memory
@@ -35,26 +37,17 @@ class AIModelManager:
         self.vae = None
     
     def load_models(self) -> Tuple[Any, Any]:
-        print("Initializing AI pipeline with maximum quality settings...")
+        print("Initializing Z-Image pipeline with unified ControlNet...")
         
         cleanup_gpu_memory()
         
-        controlnet_canny = ControlNetModel.from_pretrained(
-            CONTROLNET_ID_CANNY,
+        controlnet_union = ControlNetModel.from_pretrained(
+            CONTROLNET_ID_UNION,
             torch_dtype=self.device_config.dtype,
             use_safetensors=True,
             low_cpu_mem_usage=True
         )
-        self.controlnets.append(controlnet_canny)
-        
-        if self.use_openpose:
-            controlnet_openpose = ControlNetModel.from_pretrained(
-                CONTROLNET_ID_OPENPOSE,
-                torch_dtype=self.device_config.dtype,
-                use_safetensors=True,
-                low_cpu_mem_usage=True
-            )
-            self.controlnets.append(controlnet_openpose)
+        self.controlnets.append(controlnet_union)
         
         self.vae = AutoencoderKL.from_pretrained(
             VAE_ID,
@@ -63,13 +56,13 @@ class AIModelManager:
             low_cpu_mem_usage=True
         )
         
-        self.pipe = StableDiffusionXLControlNetPipeline.from_pretrained(
+        self.pipe = AutoPipelineForText2Image.from_pretrained(
             BASE_MODEL_ID,
-            controlnet=self.controlnets if len(self.controlnets) > 1 else self.controlnets[0],
+            controlnet=self.controlnets[0],
             vae=self.vae,
             torch_dtype=self.device_config.dtype,
             use_safetensors=True,
-            variant="fp16",
+            # variant="fp16",
             add_watermarker=False,
         )
         
@@ -85,7 +78,8 @@ class AIModelManager:
         self.pipe.vae.config.force_upcast = False
         
         if torch.cuda.is_available():
-            self.pipe.to(self.device_config.device)
+            # Optimize for 12GB VRAM using model offloading
+            self.pipe.enable_model_cpu_offload()
             self.pipe.unet.to(memory_format=torch.channels_last)
             self.pipe.enable_attention_slicing(slice_size=1)
             self.pipe.enable_vae_slicing()
@@ -111,7 +105,7 @@ class AIModelManager:
                 requires_pooled=[False, True],
             )
         
-        print(f"Pipeline ready | Device: {self.device_config.device} | Maximum quality mode active")
+        print(f"Z-Image pipeline ready | Device: {self.device_config.device} | Unified ControlNet loaded")
         return self.pipe, self.compel
     
     def cleanup(self) -> None:
@@ -167,6 +161,7 @@ def ai_pipeline_context(use_openpose: bool = False):
     finally:
         manager.cleanup()
 
+
 class TextToImageModelManager:
     def __init__(self, device_config: DeviceConfig):
         self.device_config = device_config
@@ -175,7 +170,7 @@ class TextToImageModelManager:
         self.vae = None
     
     def load_models(self) -> Tuple[Any, Any]:
-        print("Initializing Text-to-Image pipeline...")
+        print("Initializing Z-Image Text-to-Image pipeline...")
         
         cleanup_gpu_memory()
         
@@ -186,12 +181,12 @@ class TextToImageModelManager:
             low_cpu_mem_usage=True
         )
         
-        self.pipe = StableDiffusionXLPipeline.from_pretrained(
+        self.pipe = AutoPipelineForText2Image.from_pretrained(
             BASE_MODEL_ID,
             vae=self.vae,
             torch_dtype=self.device_config.dtype,
             use_safetensors=True,
-            variant="fp16",
+            # variant="fp16",
             add_watermarker=False,
         )
         
@@ -207,7 +202,8 @@ class TextToImageModelManager:
         self.pipe.vae.config.force_upcast = False
         
         if torch.cuda.is_available():
-            self.pipe.to(self.device_config.device)
+            # Optimize for 12GB VRAM using model offloading
+            self.pipe.enable_model_cpu_offload()
             self.pipe.unet.to(memory_format=torch.channels_last)
             self.pipe.enable_attention_slicing(slice_size=1)
             self.pipe.enable_vae_slicing()
@@ -233,7 +229,7 @@ class TextToImageModelManager:
                 requires_pooled=[False, True],
             )
         
-        print(f"Text-to-Image pipeline ready | Device: {self.device_config.device}")
+        print(f"Z-Image Text-to-Image pipeline ready | Device: {self.device_config.device}")
         return self.pipe, self.compel
     
     def cleanup(self) -> None:
@@ -263,6 +259,8 @@ class TextToImageModelManager:
         time.sleep(0.25)
         cleanup_gpu_memory()
         print("Text-to-Image pipeline fully unloaded and memory cleared")
+
+
 @contextmanager
 def text_to_image_pipeline_context():
     device_config = DeviceConfig.from_cuda_availability()
@@ -273,6 +271,7 @@ def text_to_image_pipeline_context():
         yield pipe, compel
     finally:
         manager.cleanup()
+
 
 
 def create_hires_refiner(
@@ -302,6 +301,7 @@ def create_hires_refiner(
     )
     
     if torch.cuda.is_available():
+        refiner.enable_model_cpu_offload()
         refiner.enable_attention_slicing(slice_size=1)
         refiner.enable_vae_slicing()
         try:

@@ -20,3 +20,17 @@ class PostSerializer(serializers.ModelSerializer):
             'status',
             'created_at'
         ]
+    
+    def validate(self, data):
+        image = data.get('image')
+        video = data.get('video')
+        use_ai = data.get('use_ai', False)
+        ai_prompt = data.get('ai_prompt')
+        
+        if not image and not video:
+            if not (use_ai and ai_prompt):
+                raise serializers.ValidationError(
+                    "Either provide an image/video file, or enable AI generation with a prompt (use_ai=true and ai_prompt)."
+                )
+        
+        return data

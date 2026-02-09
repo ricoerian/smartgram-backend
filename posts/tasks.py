@@ -1,5 +1,6 @@
 from celery import shared_task
 import traceback
+import os
 from .models import Post
 from .services import ImageGeneratorService, VideoGeneratorService
 from .infrastructure import cleanup_gpu_memory
@@ -14,28 +15,54 @@ def process_media_task(post_id: int) -> None:
 
         ai_strength = post.ai_strength
 
-        if post.image and post.use_ai:
-            base_prompt = post.ai_prompt or ""
+        if post.use_ai and post.ai_prompt:
+            base_prompt = post.ai_prompt
             style = post.ai_style or "auto"
             
-            result = ImageGeneratorService.generate(
-                post.image.path,
-                base_prompt,
-                style=style,
-                strength=ai_strength
-            )
-            
-            if result.get("success"):
-                if result.get("was_auto_detected"):
-                    post.strength_auto_detected = True
-                    post.detected_strength_value = result.get("strength")
-                    print(f"✅ Auto-detected strength: {result.get('strength'):.2f}")
+            if post.image:
+                result = ImageGeneratorService.generate(
+                    post.image.path,
+                    base_prompt,
+                    style=style,
+                    strength=ai_strength
+                )
+                
+                if result.get("success"):
+                    if result.get("was_auto_detected"):
+                        post.strength_auto_detected = True
+                        post.detected_strength_value = result.get("strength")
+                        print(f"✅ Auto-detected strength: {result.get('strength'):.2f}")
+                    else:
+                        post.strength_auto_detected = False
+                        print(f"📌 Manual strength used: {ai_strength:.2f}")
                 else:
-                    post.strength_auto_detected = False
-                    print(f"📌 Manual strength used: {ai_strength:.2f}")
+                    if result.get("error"):
+                        raise Exception(result.get("error"))
             else:
-                if result.get("error"):
-                    raise Exception(result.get("error"))
+                import tempfile
+                import uuid
+                from django.core.files import File
+                
+                temp_filename = f"{uuid.uuid4()}.png"
+                temp_path = os.path.join(tempfile.gettempdir(), temp_filename)
+                
+                result = ImageGeneratorService.generate_from_text(
+                    temp_path,
+                    base_prompt,
+                    style=style
+                )
+                
+                if result.get("success"):
+                    with open(temp_path, 'rb') as f:
+                        post.image.save(f"generated_{uuid.uuid4()}.png", File(f), save=False)
+                    
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)
+                    
+                    print(f"✅ Text-to-Image generation completed")
+                else:
+                    if result.get("error"):
+                        raise Exception(result.get("error"))
 
         if post.video:
             if post.use_ai:

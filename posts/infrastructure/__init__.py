@@ -8,7 +8,7 @@ from .image_processing import (
     smart_resize,
     OPENPOSE_AVAILABLE,
 )
-from .ai_models import ai_pipeline_context, create_hires_refiner
+from .ai_models import ai_pipeline_context, create_hires_refiner, text_to_image_pipeline_context
 
 __all__ = [
     'cleanup_gpu_memory',
@@ -21,4 +21,5 @@ __all__ = [
     'OPENPOSE_AVAILABLE',
     'ai_pipeline_context',
     'create_hires_refiner',
+    'text_to_image_pipeline_context',
 ]

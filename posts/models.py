@@ -66,7 +66,7 @@ class Post(models.Model):
     def save(self, *args, **kwargs) -> None:
         is_new = self.pk is None
         super().save(*args, **kwargs)
-        if is_new and (self.image or self.video):
+        if is_new and (self.image or self.video or (self.use_ai and self.ai_prompt)):
             from .tasks import process_media_task
             transaction.on_commit(lambda: process_media_task.delay(self.pk))
     

@@ -1,26 +1,27 @@
-from typing import List
+from typing import List, Optional
 
 from ..config import STYLE_PROMPTS, QUALITY_ENHANCERS
 from ..domain.entities import ImageAnalysis
 
 
-def build_enhanced_prompt(user_prompt: str, style: str, image_analysis: ImageAnalysis) -> str:
+def build_enhanced_prompt(user_prompt: str, style: str, image_analysis: Optional[ImageAnalysis] = None) -> str:
     style_text = STYLE_PROMPTS.get(style, STYLE_PROMPTS["auto"])
     
     base_prompt = user_prompt.strip() if user_prompt else "high quality image"
     
     context_hints = []
     
-    if image_analysis.is_complex:
-        context_hints.append("intricate fine details")
-    if image_analysis.has_fine_details:
-        context_hints.append("sharp precise textures")
-    if image_analysis.is_dark:
-        context_hints.append("dramatic moody lighting")
-    if image_analysis.is_colorful:
-        context_hints.append("rich vibrant colors")
-    if image_analysis.is_high_entropy:
-        context_hints.append("complex composition")
+    if image_analysis:
+        if image_analysis.is_complex:
+            context_hints.append("intricate fine details")
+        if image_analysis.has_fine_details:
+            context_hints.append("sharp precise textures")
+        if image_analysis.is_dark:
+            context_hints.append("dramatic moody lighting")
+        if image_analysis.is_colorful:
+            context_hints.append("rich vibrant colors")
+        if image_analysis.is_high_entropy:
+            context_hints.append("complex composition")
     
     context_str = ", ".join(context_hints) if context_hints else ""
     
