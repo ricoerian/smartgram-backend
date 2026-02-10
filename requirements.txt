@@ -205,3 +205,5 @@ websocket-client==1.9.0
 zeep==4.3.2
 zipp==3.23.0
 zope.interface==8.2
+
+ultralytics==8.3.70

@@ -14,6 +14,7 @@ from ..config import (
     CONTROLNET_MODE_OPENPOSE,
 )
 from ..domain.entities import ImageAnalysis
+from ..domain.value_objects import DeviceConfig
 from ..infrastructure import (
     analyze_image_complexity,
     compute_adaptive_canny_thresholds,
@@ -26,6 +27,7 @@ from ..infrastructure import (
     text_to_image_pipeline_context,
     create_hires_refiner,
     OPENPOSE_AVAILABLE,
+    ADetailer,
 )
 from ..adapters.prompt_builder import build_enhanced_prompt
 from ..use_cases.image_analysis import compute_optimal_strength
@@ -44,7 +46,9 @@ class ImageGeneratorService:
         inference_steps: int = DEFAULT_INFERENCE_STEPS,
         cfg_scale: float = DEFAULT_CFG_SCALE,
         denoise_strength: float = DEFAULT_DENOISE_STRENGTH,
-        strength: Optional[float] = None
+        strength: Optional[float] = None,
+        use_adetailer: bool = True,
+        adetailer_strength: float = 0.4,
     ) -> Dict[str, Any]:
         os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
         
@@ -184,6 +188,41 @@ class ImageGeneratorService:
                     del conditioning_hires, pooled_hires
                     cleanup_gpu_memory()
                 
+                if use_adetailer:
+                    print(f"Applying ADetailer (strength: {adetailer_strength})...")
+                    # We can use the same pipe mostly, but adetailer creates its own InpaintPipeline
+                    # which reuses components. 
+                    # We need to make sure we don't clear memory yet.
+                    
+                    # We need device config for ADetailer
+                    # In this context, we can derive it or create new
+                    # pipe.device is available
+                    
+                    # However, ADetailer class init expects DeviceConfig object.
+                    # Let's create it.
+                    device_config = DeviceConfig.from_cuda_availability()
+                    adetailer = ADetailer(device_config)
+                    
+ 
+                    # Apply Enhanced ADetailer (Standard + Kentus + MonetEinsley)
+                    result = ImageGeneratorService._apply_enhanced_adetailer(
+                        adetailer=adetailer,
+                        image=result,
+                        base_pipe=pipe,
+                        prompt=final_prompt,
+                        negative_prompt=NEGATIVE_PROMPTS,
+                        strength=adetailer_strength,
+                        inference_steps=inference_steps
+                    )
+                    
+                    # Clean up adetailer specific things if any (mostly handled by garbage collection unless we explicitly close things)
+
+                    # ADetailer holds model ref, we might want to clear it if it consumes VRAM (the YOLO model)
+                    if hasattr(adetailer, 'models'):
+                        adetailer.models.clear()
+                    del adetailer
+                    cleanup_gpu_memory()
+
                 conditioning = conditioning.cpu()
                 pooled = pooled.cpu()
                 del conditioning, pooled
@@ -223,6 +262,8 @@ class ImageGeneratorService:
         cfg_scale: float = DEFAULT_CFG_SCALE,
         width: int = 1024,
         height: int = 1024,
+        use_adetailer: bool = True,
+        adetailer_strength: float = 0.4,
     ) -> Dict[str, Any]:
         os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
         
@@ -284,6 +325,28 @@ class ImageGeneratorService:
                     del image
                     cleanup_gpu_memory()
                 
+                
+                if use_adetailer:
+                    print(f"Applying ADetailer (strength: {adetailer_strength})...")
+                    device_config = DeviceConfig.from_cuda_availability()
+                    adetailer = ADetailer(device_config)
+                    
+                    # Apply Enhanced ADetailer (Standard + Kentus + MonetEinsley)
+                    result = ImageGeneratorService._apply_enhanced_adetailer(
+                        adetailer=adetailer,
+                        image=result,
+                        base_pipe=pipe,
+                        prompt=final_prompt,
+                        negative_prompt=NEGATIVE_PROMPTS,
+                        strength=adetailer_strength,
+                        inference_steps=inference_steps
+                    )
+                    
+                    if hasattr(adetailer, 'models'):
+                        adetailer.models.clear()
+                    del adetailer
+                    cleanup_gpu_memory()
+
                 conditioning = conditioning.cpu()
                 pooled = pooled.cpu()
                 del conditioning, pooled
@@ -310,3 +373,81 @@ class ImageGeneratorService:
             cleanup_gpu_memory()
             print("Memory cleanup completed")
 
+
+    @staticmethod
+    def _apply_enhanced_adetailer(
+        adetailer: Any,
+        image: Image.Image,
+        base_pipe: Any,
+        prompt: str,
+        negative_prompt: str,
+        strength: float,
+        inference_steps: int
+    ) -> Image.Image:
+        """
+        Helper to apply a sequence of ADetailer models.
+        """
+        steps = max(20, int(inference_steps * 0.6))
+        
+        # 1. Standard Person/Face/Hand (Bingsu/adetailer)
+        standard_models = [
+            ("person_yolov8m-seg.pt", "detailed person, high quality, realistic", "deformed, blurred, bad anatomy"),
+            ("face_yolov8m.pt", "detailed face, high quality, realistic eyes, sharp focus", "bad eyes, deformed, blurred"),
+            ("hand_yolov8n.pt", "detailed hands, anatomical, high quality", "malformed hands, extra fingers, missing fingers, bad anatomy"),
+        ]
+        
+        for model_name, det_prompt, det_neg in standard_models:
+            image = adetailer.apply_adetailer(
+                image=image,
+                base_pipe=base_pipe,
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                strength=strength,
+                steps=steps,
+                model_name=model_name,
+                repo_id="Bingsu/adetailer",
+                detailer_prompt=det_prompt,
+                detailer_negative_prompt=det_neg
+            )
+
+        # 2. Kentus/Adetailer Enhancement Parts
+        kentus_models = [
+            ("Eyeful_v1.pt", "detailed eyes, realistic iris, sharp focus", "bad eyes, blurred", 0.35),
+            ("lips_v1.pt", "detailed lips, realistic mouth", "blurred, deformed", 0.3),
+            ("female_breast_v3.pt", "detailed breasts, anatomy", "deformed, blurred", 0.35),
+            ("belly_seg_v1.pt", "detailed belly, navel, anatomy", "deformed", 0.3),
+            # NSFW / Specific parts (Use with caution or conditionally, enabling for now as requested)
+            ("vagina_v2.5.pt", "explicit, anatomy", "deformed, blurred", 0.35),
+            ("penis_V2.pt", "explicit, anatomy", "deformed, blurred", 0.35),
+            ("assdetailer-seg.pt", "detailed buttocks, anatomy", "deformed", 0.35),
+        ]
+        
+        for model_name, det_prompt, det_neg, model_strength in kentus_models:
+             image = adetailer.apply_adetailer(
+                image=image,
+                base_pipe=base_pipe,
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                strength=model_strength if model_strength else strength,
+                steps=steps,
+                model_name=model_name,
+                repo_id="Kentus/Adetailer",
+                detailer_prompt=det_prompt,
+                detailer_negative_prompt=det_neg
+            )
+            
+        # 3. MonetEinsley/ADetailer_CM (Feet)
+        image = adetailer.apply_adetailer(
+            image=image,
+            base_pipe=base_pipe,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            strength=0.35, # Feet often need careful handling
+            steps=steps,
+            model_name="foot_yolov8x_v2.pt",
+            repo_id="MonetEinsley/ADetailer_CM",
+            detailer_prompt="detailed feet, toes, realistic",
+            detailer_negative_prompt="malformed feet, extra toes, missing toes, bad anatomy"
+        )
+        
+        return image

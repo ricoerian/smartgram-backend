@@ -22,4 +22,6 @@ __all__ = [
     'ai_pipeline_context',
     'create_hires_refiner',
     'text_to_image_pipeline_context',
+    'ADetailer',
 ]
+from .adetailer import ADetailer
