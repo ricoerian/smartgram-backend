@@ -12,6 +12,7 @@ from diffusers import (
     AutoencoderKL,
 )
 from compel import Compel, ReturnedEmbeddingsType
+from huggingface_hub.utils import LocalEntryNotFoundError
 
 from ..config import (
     BASE_MODEL_ID,
@@ -23,6 +24,21 @@ from ..config import (
 from ..domain.value_objects import DeviceConfig, ImageDimensions
 from .memory_manager import cleanup_gpu_memory
 from .image_processing import OPENPOSE_AVAILABLE
+
+
+def _load_pretrained(model_class, model_id, **kwargs):
+    """
+    Helper to load a model from local cache first, falling back to download/check
+    if not found or incomplete.
+    """
+    try:
+        # Try loading with local_files_only=True
+        return model_class.from_pretrained(model_id, local_files_only=True, **kwargs)
+    except (OSError, EnvironmentError, LocalEntryNotFoundError):
+        # Fallback to standard loading (will check/download)
+        print(f"Model {model_id} not found locally or incomplete. Downloading/Checking...")
+        return model_class.from_pretrained(model_id, local_files_only=False, **kwargs)
+
 
 
 class AIModelManager:
@@ -39,7 +55,8 @@ class AIModelManager:
         
         cleanup_gpu_memory()
         
-        controlnet_canny = ControlNetModel.from_pretrained(
+        controlnet_canny = _load_pretrained(
+            ControlNetModel,
             CONTROLNET_ID_CANNY,
             torch_dtype=self.device_config.dtype,
             use_safetensors=True,
@@ -48,7 +65,8 @@ class AIModelManager:
         self.controlnets.append(controlnet_canny)
         
         if self.use_openpose:
-            controlnet_openpose = ControlNetModel.from_pretrained(
+            controlnet_openpose = _load_pretrained(
+                ControlNetModel,
                 CONTROLNET_ID_OPENPOSE,
                 torch_dtype=self.device_config.dtype,
                 use_safetensors=True,
@@ -56,14 +74,16 @@ class AIModelManager:
             )
             self.controlnets.append(controlnet_openpose)
         
-        self.vae = AutoencoderKL.from_pretrained(
+        self.vae = _load_pretrained(
+            AutoencoderKL,
             VAE_ID,
             torch_dtype=self.device_config.dtype,
             use_safetensors=True,
             low_cpu_mem_usage=True
         )
         
-        self.pipe = StableDiffusionXLControlNetPipeline.from_pretrained(
+        self.pipe = _load_pretrained(
+            StableDiffusionXLControlNetPipeline,
             BASE_MODEL_ID,
             controlnet=self.controlnets if len(self.controlnets) > 1 else self.controlnets[0],
             vae=self.vae,
@@ -179,14 +199,16 @@ class TextToImageModelManager:
         
         cleanup_gpu_memory()
         
-        self.vae = AutoencoderKL.from_pretrained(
+        self.vae = _load_pretrained(
+            AutoencoderKL,
             VAE_ID,
             torch_dtype=self.device_config.dtype,
             use_safetensors=True,
             low_cpu_mem_usage=True
         )
         
-        self.pipe = StableDiffusionXLPipeline.from_pretrained(
+        self.pipe = _load_pretrained(
+            StableDiffusionXLPipeline,
             BASE_MODEL_ID,
             vae=self.vae,
             torch_dtype=self.device_config.dtype,

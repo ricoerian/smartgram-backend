@@ -31,6 +31,8 @@ class ImageGeneratorService:
         prompt: str,
         style: str = "auto",
         strength_canny: Optional[float] = None,
+        strength_openpose: float = 0.35,
+        use_openpose: bool = True,
         use_hires: bool = False,
         inference_steps: int = DEFAULT_INFERENCE_STEPS,
         cfg_scale: float = DEFAULT_CFG_SCALE,
@@ -42,6 +44,8 @@ class ImageGeneratorService:
         original_image = None
         preprocessed_image = None
         canny_image = None
+        openpose_image = None
+        control_images = []
         result = None
         
         response = {
@@ -80,13 +84,27 @@ class ImageGeneratorService:
 
             canny_thresholds = compute_adaptive_canny_thresholds(preprocessed_image)
             canny_image = make_canny_condition(preprocessed_image, canny_thresholds)
+            control_images = [canny_image]
+            control_scales = [strength_canny]
+            
+            if use_openpose and OPENPOSE_AVAILABLE:
+                try:
+                    openpose_image = make_openpose_condition(preprocessed_image)
+                    if openpose_image:
+                        control_images.append(openpose_image)
+                        control_scales.append(strength_openpose)
+                        print(f"OpenPose ControlNet strength: {strength_openpose:.3f}")
+                except Exception as e:
+                    print(f"OpenPose skipped: {e}")
+            elif use_openpose and not OPENPOSE_AVAILABLE:
+                print("OpenPose unavailable (dependencies missing)")
             
             final_prompt = build_enhanced_prompt(prompt, style, image_analysis)
             print(f"Enhanced prompt: {final_prompt[:150]}...")
             
-            use_cfg_normalize = style in ["realistic", "hdr"] and CFG_NORMALIZE_REALISM
+            final_control_scale = control_scales if len(control_scales) > 1 else control_scales[0]
             
-            with ai_pipeline_context(use_openpose=False) as (pipe, compel):
+            with ai_pipeline_context(use_openpose=use_openpose and OPENPOSE_AVAILABLE) as (pipe, compel):
                 device = pipe.device
                 dtype = pipe.unet.dtype
                 
@@ -95,21 +113,22 @@ class ImageGeneratorService:
                     conditioning = conditioning.to(dtype)
                     pooled = pooled.to(dtype)
                 
-                print("Generating image with Z-Image pipeline...")
+                print("Generating image with maximum quality settings...")
                 with torch.inference_mode(), torch.no_grad():
                     latents = pipe(
                         prompt_embeds=conditioning[0:1],
                         negative_prompt_embeds=conditioning[1:2],
                         pooled_prompt_embeds=pooled[0:1],
                         negative_pooled_prompt_embeds=pooled[1:2],
-                        image=canny_image,
-                        controlnet_conditioning_scale=strength_canny,
+                        image=control_images,
+                        controlnet_conditioning_scale=final_control_scale,
                         guidance_scale=cfg_scale,
                         num_inference_steps=inference_steps,
                         output_type="latent",
                     ).images[0]
                     
-                    del canny_image
+                    del control_images[:]
+                    del control_scales
                     if torch.cuda.is_available():
                         torch.cuda.synchronize()
                     cleanup_gpu_memory()
@@ -172,9 +191,12 @@ class ImageGeneratorService:
             return response
         
         finally:
-            for obj in [original_image, preprocessed_image, canny_image, result]:
+            for obj in [original_image, preprocessed_image, canny_image, openpose_image, result]:
                 if obj is not None:
                     del obj
+            
+            if control_images:
+                control_images.clear()
             
             cleanup_gpu_memory()
             time.sleep(0.2)
