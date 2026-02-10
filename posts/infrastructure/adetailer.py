@@ -25,16 +25,31 @@ class ADetailer:
             return self.models[model_key]
             
         print(f"Loading ADetailer model: {model_name} from {repo_id}")
+        
+        model_path = None
         try:
-            # First try to load from local ultralytics cache or download if needed
-            # We can use hf_hub_download to get the path
-            model_path = hf_hub_download(repo_id=repo_id, filename=model_name)
-            model = YOLO(model_path)
-            self.models[model_key] = model
-            return model
-        except Exception as e:
-            print(f"Failed to load ADetailer model {model_name} from {repo_id}: {e}")
-            return None
+            # First try the local cache
+            # This avoids reaching out to the hub to check for updates if we already have it
+            model_path = hf_hub_download(repo_id=repo_id, filename=model_name, local_files_only=True)
+        except Exception:
+            # If not found locally, download it
+            print(f"Model {model_name} not found locally. Downloading...")
+            try:
+                model_path = hf_hub_download(repo_id=repo_id, filename=model_name)
+            except Exception as e:
+                print(f"Failed to download ADetailer model {model_name} from {repo_id}: {e}")
+                return None
+        
+        if model_path:
+            try:
+                model = YOLO(model_path)
+                self.models[model_key] = model
+                return model
+            except Exception as e:
+                print(f"Failed to load YOLO model from {model_path}: {e}")
+                return None
+        
+        return None
 
     def _get_inpaint_pipeline(self, base_pipe):
         if self.inpaint_pipe is not None:
