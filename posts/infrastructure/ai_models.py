@@ -5,7 +5,6 @@ from typing import Optional, Tuple, Any
 
 from diffusers import (
     ControlNetModel,
-    StableDiffusionXLControlNetPipeline,
     StableDiffusionXLPipeline,
     StableDiffusionXLImg2ImgPipeline,
     DPMSolverMultistepScheduler,
@@ -17,13 +16,14 @@ from huggingface_hub.utils import LocalEntryNotFoundError
 from ..config import (
     BASE_MODEL_ID,
     VAE_ID,
-    CONTROLNET_ID_CANNY,
-    CONTROLNET_ID_OPENPOSE,
+    CONTROLNET_UNION_ID,
     HIRES_SCALE,
 )
 from ..domain.value_objects import DeviceConfig, ImageDimensions
 from .memory_manager import cleanup_gpu_memory
 from .image_processing import OPENPOSE_AVAILABLE
+from .custom_controlnet import UnionMultiControlNetModel
+from .custom_pipeline import StableDiffusionXLUnionPipeline
 
 
 def _load_pretrained(model_class, model_id, **kwargs):
@@ -55,24 +55,26 @@ class AIModelManager:
         
         cleanup_gpu_memory()
         
-        controlnet_canny = _load_pretrained(
+        # Load the single Union ControlNet model
+        controlnet_union = _load_pretrained(
             ControlNetModel,
-            CONTROLNET_ID_CANNY,
+            CONTROLNET_UNION_ID,
             torch_dtype=self.device_config.dtype,
             use_safetensors=True,
             low_cpu_mem_usage=True
         )
-        self.controlnets.append(controlnet_canny)
         
+        # Prepare the controlnet(s) for the pipeline
         if self.use_openpose:
-            controlnet_openpose = _load_pretrained(
-                ControlNetModel,
-                CONTROLNET_ID_OPENPOSE,
-                torch_dtype=self.device_config.dtype,
-                use_safetensors=True,
-                low_cpu_mem_usage=True
-            )
-            self.controlnets.append(controlnet_openpose)
+            # If using both Canny (implied as base) and OpenPose, we need two "instances"
+            # We use the custom MultiControlNet to wrap the SAME model execution twice
+            # This allows passing different class_labels (modes) to each "layer"
+            # Note: We pass the same model instance to save VRAM. 
+            self.controlnets = UnionMultiControlNetModel([controlnet_union, controlnet_union])
+            # self.controlnets will be used in pipeline init
+        else:
+            # Just single usage (Canny)
+            self.controlnets = controlnet_union
         
         self.vae = _load_pretrained(
             AutoencoderKL,
@@ -83,9 +85,9 @@ class AIModelManager:
         )
         
         self.pipe = _load_pretrained(
-            StableDiffusionXLControlNetPipeline,
+            StableDiffusionXLUnionPipeline,
             BASE_MODEL_ID,
-            controlnet=self.controlnets if len(self.controlnets) > 1 else self.controlnets[0],
+            controlnet=self.controlnets,
             vae=self.vae,
             torch_dtype=self.device_config.dtype,
             use_safetensors=True,
@@ -158,12 +160,27 @@ class AIModelManager:
                         setattr(self.pipe, comp_name, None)
             del self.pipe
         
-        for cn in self.controlnets:
-            if cn is not None:
-                if hasattr(cn, 'to'):
-                    cn.to('cpu')
-                del cn
-        self.controlnets.clear()
+        # Helper to clear a single model or list/container of models
+        def clear_model(m):
+            if m is not None:
+                if isinstance(m, (list, tuple)):
+                    for item in m:
+                        clear_model(item)
+                elif hasattr(m, 'nets'): # MultiControlNet
+                     for item in m.nets:
+                         clear_model(item)
+                else:
+                    if hasattr(m, 'to'):
+                        m.to('cpu')
+                    del m
+
+        # Clear controlnets
+        if hasattr(self, 'controlnets'):
+             clear_model(self.controlnets)
+             if isinstance(self.controlnets, list):
+                 self.controlnets.clear()
+             else:
+                 self.controlnets = []
         
         if self.vae is not None:
             if hasattr(self.vae, 'to'):

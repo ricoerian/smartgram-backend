@@ -5,7 +5,14 @@ from typing import Optional, List, Dict, Any, Union
 import traceback
 import time
 
-from ..config import DEFAULT_INFERENCE_STEPS, DEFAULT_CFG_SCALE, DEFAULT_DENOISE_STRENGTH, NEGATIVE_PROMPTS
+from ..config import (
+    DEFAULT_INFERENCE_STEPS,
+    DEFAULT_CFG_SCALE,
+    DEFAULT_DENOISE_STRENGTH,
+    NEGATIVE_PROMPTS,
+    CONTROLNET_MODE_CANNY,
+    CONTROLNET_MODE_OPENPOSE,
+)
 from ..domain.entities import ImageAnalysis
 from ..infrastructure import (
     analyze_image_complexity,
@@ -87,12 +94,15 @@ class ImageGeneratorService:
             control_images = [canny_image]
             control_scales = [strength_canny]
             
+            control_modes = [CONTROLNET_MODE_CANNY]
+            
             if use_openpose and OPENPOSE_AVAILABLE:
                 try:
                     openpose_image = make_openpose_condition(preprocessed_image)
                     if openpose_image:
                         control_images.append(openpose_image)
                         control_scales.append(strength_openpose)
+                        control_modes.append(CONTROLNET_MODE_OPENPOSE)
                         print(f"OpenPose ControlNet strength: {strength_openpose:.3f}")
                 except Exception as e:
                     print(f"OpenPose skipped: {e}")
@@ -122,6 +132,7 @@ class ImageGeneratorService:
                         negative_pooled_prompt_embeds=pooled[1:2],
                         image=control_images,
                         controlnet_conditioning_scale=final_control_scale,
+                        control_modes=control_modes,
                         guidance_scale=cfg_scale,
                         num_inference_steps=inference_steps,
                         output_type="latent",

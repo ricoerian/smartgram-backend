@@ -6,13 +6,13 @@ from typing import Optional
 from ..domain.entities import ImageAnalysis
 from ..domain.value_objects import CannyThresholds, ImageDimensions
 from ..config import MAX_IMAGE_SIZE
-
-try:
-    from controlnet_aux import OpenposeDetector
-    import mediapipe
-    OPENPOSE_AVAILABLE = True
-except (ImportError, AttributeError, UserWarning):
-    OPENPOSE_AVAILABLE = False
+OPENPOSE_AVAILABLE = True
+# try:
+#     from controlnet_aux import OpenposeDetector
+#     import mediapipe
+#     OPENPOSE_AVAILABLE = True
+# except (ImportError, AttributeError, UserWarning):
+#     OPENPOSE_AVAILABLE = False
 
 
 def analyze_image_complexity(image: Image.Image) -> ImageAnalysis:
