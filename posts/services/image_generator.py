@@ -108,8 +108,17 @@ class ImageGeneratorService:
                         control_scales.append(strength_openpose)
                         control_modes.append(CONTROLNET_MODE_OPENPOSE)
                         print(f"OpenPose ControlNet strength: {strength_openpose:.3f}")
+                    else:
+                        raise ValueError("OpenPose returned None (no person detected)")
                 except Exception as e:
                     print(f"OpenPose skipped: {e}")
+                    # Fallback: maintain pipeline consistency
+                    # The pipeline expects 2 images if initialized with use_openpose=True
+                    # We provide a blank image with 0.0 scale
+                    blank = Image.new("RGB", canny_image.size, (0, 0, 0))
+                    control_images.append(blank)
+                    control_scales.append(0.0)
+                    control_modes.append(CONTROLNET_MODE_OPENPOSE)
             elif use_openpose and not OPENPOSE_AVAILABLE:
                 print("OpenPose unavailable (dependencies missing)")
             
