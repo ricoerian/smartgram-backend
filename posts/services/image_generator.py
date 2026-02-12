@@ -28,6 +28,8 @@ from ..infrastructure import (
     create_hires_refiner,
     OPENPOSE_AVAILABLE,
     ADetailer,
+    FaceSwapper,
+    FaceRestorer,
 )
 from ..adapters.prompt_builder import build_enhanced_prompt
 from ..use_cases.image_analysis import compute_optimal_strength
@@ -49,6 +51,8 @@ class ImageGeneratorService:
         strength: Optional[float] = None,
         use_adetailer: bool = True,
         adetailer_strength: float = 0.4,
+        face_image_path: Optional[str] = None,
+        enhance_face: bool = True,
     ) -> Dict[str, Any]:
         os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
         
@@ -57,7 +61,10 @@ class ImageGeneratorService:
         canny_image = None
         openpose_image = None
         control_images = []
+
         result = None
+        swapper = None
+        restorer = None
         
         response = {
             "success": False,
@@ -237,6 +244,44 @@ class ImageGeneratorService:
                 del conditioning, pooled
                 cleanup_gpu_memory()
             
+            # ---------------------------------------------------------
+            # POST-PROCESSING: Face Swap (ReActor)
+            # ---------------------------------------------------------
+            if face_image_path and os.path.exists(face_image_path):
+                print(f"Applying Face Swap (Source: {face_image_path})...")
+                try:
+                    swapper = FaceSwapper()
+                    source_face_img = Image.open(face_image_path).convert("RGB")
+                    # Apply scale=1.15 to enlarge the face slightly for better fit
+                    result = swapper.process_image(result, source_face_img, scale=1.15)
+                    print("Face Swap applied successfully")
+                except Exception as e:
+                    print(f"Face Swap failed: {e}")
+                    traceback.print_exc()
+                finally:
+                    if swapper:
+                        del swapper
+                    if 'source_face_img' in locals():
+                        del source_face_img
+                    cleanup_gpu_memory()
+
+            # ---------------------------------------------------------
+            # POST-PROCESSING: Face Restoration (GFPGAN)
+            # ---------------------------------------------------------
+            if enhance_face:
+                print("Applying Face Restoration (CodeFormer with high fidelity)...")
+                try:
+                    # Use fidelity=0.8 to preserve identity from Face Swap while enhancing details
+                    restorer = FaceRestorer(fidelity=0.8)
+                    result = restorer.restore_image(result)
+                    print("Face Restoration applied")
+                except Exception as e:
+                    print(f"Face Restoration failed: {e}")
+                finally:
+                    if 'restorer' in locals() and restorer:
+                        del restorer
+                    cleanup_gpu_memory()
+
             result.save(image_path, quality=98, optimize=True, subsampling=0)
             print("✅ Image generation completed successfully")
             
@@ -273,6 +318,8 @@ class ImageGeneratorService:
         height: int = 1024,
         use_adetailer: bool = True,
         adetailer_strength: float = 0.4,
+        face_image_path: Optional[str] = None,
+        enhance_face: bool = True,
     ) -> Dict[str, Any]:
         os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
         
@@ -361,6 +408,45 @@ class ImageGeneratorService:
                 del conditioning, pooled
                 cleanup_gpu_memory()
             
+            
+            # ---------------------------------------------------------
+            # POST-PROCESSING: Face Swap (ReActor)
+            # ---------------------------------------------------------
+            if face_image_path and os.path.exists(face_image_path):
+                print(f"Applying Face Swap (Source: {face_image_path})...")
+                try:
+                    swapper = FaceSwapper()
+                    source_face_img = Image.open(face_image_path).convert("RGB")
+                    # Apply scale=1.15 to enlarge the face slightly for better fit
+                    result = swapper.process_image(result, source_face_img, scale=1.15)
+                    print("Face Swap applied successfully")
+                except Exception as e:
+                    print(f"Face Swap failed: {e}")
+                    traceback.print_exc()
+                finally:
+                    if 'swapper' in locals() and swapper:
+                        del swapper
+                    if 'source_face_img' in locals():
+                        del source_face_img
+                    cleanup_gpu_memory()
+
+            # ---------------------------------------------------------
+            # POST-PROCESSING: Face Restoration (GFPGAN)
+            # ---------------------------------------------------------
+            if enhance_face:
+                print("Applying Face Restoration (CodeFormer with high fidelity)...")
+                try:
+                    # Use fidelity=0.8 to preserve identity
+                    restorer = FaceRestorer(fidelity=0.8)
+                    result = restorer.restore_image(result)
+                    print("Face Restoration applied")
+                except Exception as e:
+                    print(f"Face Restoration failed: {e}")
+                finally:
+                    if 'restorer' in locals() and restorer:
+                        del restorer
+                    cleanup_gpu_memory()
+
             result.save(output_path, quality=98, optimize=True, subsampling=0)
             print("✅ Text-to-Image generation completed successfully")
             

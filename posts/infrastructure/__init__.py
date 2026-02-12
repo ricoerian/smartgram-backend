@@ -23,5 +23,9 @@ __all__ = [
     'create_hires_refiner',
     'text_to_image_pipeline_context',
     'ADetailer',
+    'FaceSwapper',
+    'FaceRestorer',
 ]
 from .adetailer import ADetailer
+from .face_swapper import FaceSwapper
+from .face_restorer import FaceRestorer

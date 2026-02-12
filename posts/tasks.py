@@ -24,7 +24,9 @@ def process_media_task(post_id: int) -> None:
                     post.image.path,
                     base_prompt,
                     style=style,
-                    strength=ai_strength
+                    strength=ai_strength,
+                    face_image_path=post.image.path, # Use original image as face source
+                    enhance_face=True # Always enhance if swapping
                 )
                 
                 if result.get("success"):
