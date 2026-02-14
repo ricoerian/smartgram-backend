@@ -52,7 +52,7 @@ class ImageGeneratorService:
         use_adetailer: bool = True,
         adetailer_strength: float = 0.4,
         face_image_path: Optional[str] = None,
-        enhance_face: bool = True,
+        enhance_face: bool = False,
     ) -> Dict[str, Any]:
         os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
         
@@ -253,7 +253,7 @@ class ImageGeneratorService:
                     swapper = FaceSwapper()
                     source_face_img = Image.open(face_image_path).convert("RGB")
                     # Apply scale=1.15 to enlarge the face slightly for better fit
-                    result = swapper.process_image(result, source_face_img, scale=1.15)
+                    result = swapper.process_image(result, source_face_img, scale=1)
                     print("Face Swap applied successfully")
                 except Exception as e:
                     print(f"Face Swap failed: {e}")
@@ -268,19 +268,19 @@ class ImageGeneratorService:
             # ---------------------------------------------------------
             # POST-PROCESSING: Face Restoration (GFPGAN)
             # ---------------------------------------------------------
-            if enhance_face:
-                print("Applying Face Restoration (CodeFormer with high fidelity)...")
-                try:
-                    # Use fidelity=0.8 to preserve identity from Face Swap while enhancing details
-                    restorer = FaceRestorer(fidelity=0.8)
-                    result = restorer.restore_image(result)
-                    print("Face Restoration applied")
-                except Exception as e:
-                    print(f"Face Restoration failed: {e}")
-                finally:
-                    if 'restorer' in locals() and restorer:
-                        del restorer
-                    cleanup_gpu_memory()
+            # if enhance_face:
+            #     print("Applying Face Restoration (CodeFormer with high fidelity)...")
+            #     try:
+            #         # Use fidelity=0.8 to preserve identity from Face Swap while enhancing details
+            #         restorer = FaceRestorer()
+            #         result = restorer.restore_image(result, fidelity=0.8)
+            #         print("Face Restoration applied")
+            #     except Exception as e:
+            #         print(f"Face Restoration failed: {e}")
+            #     finally:
+            #         if 'restorer' in locals() and restorer:
+            #             del restorer
+            #         cleanup_gpu_memory()
 
             result.save(image_path, quality=98, optimize=True, subsampling=0)
             print("✅ Image generation completed successfully")
@@ -314,159 +314,68 @@ class ImageGeneratorService:
         style: str = "auto",
         inference_steps: int = DEFAULT_INFERENCE_STEPS,
         cfg_scale: float = DEFAULT_CFG_SCALE,
-        width: int = 1024,
-        height: int = 1024,
+        use_hires: bool = True,
         use_adetailer: bool = True,
         adetailer_strength: float = 0.4,
-        face_image_path: Optional[str] = None,
-        enhance_face: bool = True,
+        enhance_face: bool = False
     ) -> Dict[str, Any]:
-        os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
-        
-        result = None
-        
+        """
+        Text-to-Image generation (untuk text-to-video).
+        """
         response = {
             "success": False,
-            "error": None,
+            "error": None
         }
 
         try:
-            print(f"Text-to-Image generation")
-            print(f"Style: {style} | Steps: {inference_steps} | CFG: {cfg_scale}")
-            print(f"Size: {width}x{height}")
-            
-            final_prompt = build_enhanced_prompt(prompt, style, None)
-            print(f"Enhanced prompt: {final_prompt[:150]}...")
-            
+            print(f"Generating text-to-image: {prompt} | Style: {style}")
+
+            # Reuse existing pipeline context
             with text_to_image_pipeline_context() as (pipe, compel):
-                device = pipe.device
-                dtype = pipe.unet.dtype
-                
-                with torch.no_grad():
-                    conditioning, pooled = compel([final_prompt, NEGATIVE_PROMPTS])
-                    conditioning = conditioning.to(dtype)
-                    pooled = pooled.to(dtype)
-                
-                print("Generating image with Z-Image from text...")
-                with torch.inference_mode(), torch.no_grad():
-                    latents = pipe(
-                        prompt_embeds=conditioning[0:1],
-                        negative_prompt_embeds=conditioning[1:2],
-                        pooled_prompt_embeds=pooled[0:1],
-                        negative_pooled_prompt_embeds=pooled[1:2],
-                        guidance_scale=cfg_scale,
-                        num_inference_steps=inference_steps,
-                        width=width,
-                        height=height,
-                        output_type="latent",
-                    ).images[0]
-                    
-                    if torch.cuda.is_available():
-                        torch.cuda.synchronize()
-                    cleanup_gpu_memory()
-                    
-                    print("Decoding latents to image...")
-                    latents = latents.unsqueeze(0).to(pipe.vae.dtype)
-                    image = pipe.vae.decode(latents / pipe.vae.config.scaling_factor, return_dict=False)[0]
-                    
-                    del latents
-                    if torch.cuda.is_available():
-                        torch.cuda.synchronize()
-                    cleanup_gpu_memory()
-                    
-                    image = (image / 2 + 0.5).clamp(0, 1)
-                    image = image.cpu().permute(0, 2, 3, 1).float().numpy()
-                    result = Image.fromarray((image[0] * 255).round().astype("uint8"))
-                    
-                    del image
-                    cleanup_gpu_memory()
-                
-                
+                enhanced_prompt = build_enhanced_prompt(prompt, style)
+                negative_prompt = NEGATIVE_PROMPTS
+
+                conditioning, pooled = compel(enhanced_prompt)
+                neg_conditioning, neg_pooled = compel(negative_prompt)
+
+                # Generate image
+                result = pipe(
+                    prompt_embeds=conditioning,
+                    pooled_prompt_embeds=pooled,
+                    negative_prompt_embeds=neg_conditioning,
+                    negative_pooled_prompt_embeds=neg_pooled,
+                    num_inference_steps=inference_steps,
+                    guidance_scale=cfg_scale,
+                    height=1024,  # Adjust sesuai SVD input
+                    width=576,
+                    output_type="pil"
+                ).images[0]
+
+                # Apply post-processing jika perlu (hires, adetailer, etc.)
+                if use_hires:
+                    result = create_hires_refiner(pipe, result, conditioning, pooled, neg_conditioning, neg_pooled, inference_steps, cfg_scale, 0.45)
+
                 if use_adetailer:
-                    print(f"Applying ADetailer (strength: {adetailer_strength})...")
-                    device_config = DeviceConfig.from_cuda_availability()
-                    adetailer = ADetailer(device_config)
-                    
-                    # Apply Enhanced ADetailer (Standard + Kentus + MonetEinsley)
+                    adetailer = ADetailer(DeviceConfig.from_cuda_availability())
                     result = ImageGeneratorService._apply_enhanced_adetailer(
-                        adetailer=adetailer,
-                        image=result,
-                        base_pipe=pipe,
-                        prompt=final_prompt,
-                        negative_prompt=NEGATIVE_PROMPTS,
-                        strength=adetailer_strength,
-                        inference_steps=inference_steps
+                        adetailer, result, pipe, enhanced_prompt, negative_prompt, adetailer_strength, inference_steps
                     )
-                    
-                    if hasattr(adetailer, 'models'):
-                        adetailer.models.clear()
-                    del adetailer
-                    cleanup_gpu_memory()
 
-                conditioning = conditioning.cpu()
-                pooled = pooled.cpu()
-                del conditioning, pooled
-                cleanup_gpu_memory()
-            
-            
-            # ---------------------------------------------------------
-            # POST-PROCESSING: Face Swap (ReActor)
-            # ---------------------------------------------------------
-            if face_image_path and os.path.exists(face_image_path):
-                print(f"Applying Face Swap (Source: {face_image_path})...")
-                try:
-                    swapper = FaceSwapper()
-                    source_face_img = Image.open(face_image_path).convert("RGB")
-                    # Apply scale=1.15 to enlarge the face slightly for better fit
-                    result = swapper.process_image(result, source_face_img, scale=1.15)
-                    print("Face Swap applied successfully")
-                except Exception as e:
-                    print(f"Face Swap failed: {e}")
-                    traceback.print_exc()
-                finally:
-                    if 'swapper' in locals() and swapper:
-                        del swapper
-                    if 'source_face_img' in locals():
-                        del source_face_img
-                    cleanup_gpu_memory()
+                if enhance_face:
+                    # Apply face restoration jika needed
+                    pass  # Reuse existing code jika ada
 
-            # ---------------------------------------------------------
-            # POST-PROCESSING: Face Restoration (GFPGAN)
-            # ---------------------------------------------------------
-            if enhance_face:
-                print("Applying Face Restoration (CodeFormer with high fidelity)...")
-                try:
-                    # Use fidelity=0.8 to preserve identity
-                    restorer = FaceRestorer(fidelity=0.8)
-                    result = restorer.restore_image(result)
-                    print("Face Restoration applied")
-                except Exception as e:
-                    print(f"Face Restoration failed: {e}")
-                finally:
-                    if 'restorer' in locals() and restorer:
-                        del restorer
-                    cleanup_gpu_memory()
+                result.save(output_path, quality=98)
+                print("✅ Text-to-Image completed")
 
-            result.save(output_path, quality=98, optimize=True, subsampling=0)
-            print("✅ Text-to-Image generation completed successfully")
-            
             response["success"] = True
             return response
-        
+
         except Exception as e:
-            print(f"❌ Error during Text-to-Image generation: {e}")
-            traceback.print_exc()
             response["error"] = str(e)
             return response
-        
         finally:
-            if result is not None:
-                del result
-            
             cleanup_gpu_memory()
-            time.sleep(0.2)
-            cleanup_gpu_memory()
-            print("Memory cleanup completed")
 
 
     @staticmethod

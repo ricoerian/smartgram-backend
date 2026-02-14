@@ -9,7 +9,7 @@ CONTROLNET_MODE_OPENPOSE = 0  # Note: verification needed if 4 or 5. xinsir docs
 # 1 -- depth
 # 2 -- thick line(scribble/hed/softedge/ted-512)
 # 3 -- thin line(canny/mlsd/lineart/animelineart/ted-1280)
-# 4 -- normal
+# 4 -- normal   
 # 5 -- segment
 # ...
 # I should probably verify this mapping.

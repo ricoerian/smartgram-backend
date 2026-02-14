@@ -19,7 +19,7 @@ class FaceSwapper:
         try:
             # Initialize FaceAnalysis for face detection
             self.app = FaceAnalysis(name='buffalo_l', providers=self.providers)
-            self.app.prepare(ctx_id=0, det_size=(640, 640))
+            self.app.prepare(ctx_id=0, det_size=(1024, 1024))
             
             # Initialize Swapper
             if os.path.exists(self.model_path):

@@ -30,6 +30,17 @@ class Post(models.Model):
         ('steampunk', 'Steampunk'),
         ('minimalist', 'Minimalist'),
     ]
+    class GenerationType(models.TextChoices):
+        TEXT_TO_IMAGE = 'text_to_image', 'Text to Image'
+        IMAGE_TO_IMAGE = 'image_to_image', 'Image + Text to Image'
+        TEXT_TO_VIDEO = 'text_to_video', 'Text to Video'
+        IMAGE_TO_VIDEO = 'image_to_video', 'Image to Video'
+    generation_type = models.CharField(
+    max_length=20,
+    choices=GenerationType.choices,
+    default=GenerationType.TEXT_TO_IMAGE,
+    help_text="Pilih jenis generation yang diinginkan"
+)
 
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     caption = models.TextField(blank=True)
@@ -38,6 +49,11 @@ class Post(models.Model):
     use_ai = models.BooleanField(default=False)
     ai_style = models.CharField(max_length=20, choices=STYLE_CHOICES, default='auto', blank=True)
     ai_prompt = models.TextField(blank=True, null=True)
+    video_prompt = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Prompt khusus untuk gerakan/video (opsional, jika berbeda dari ai_prompt)"
+    )
     
     ai_strength = models.FloatField(
         default=None,
